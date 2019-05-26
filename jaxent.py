@@ -17,6 +17,14 @@ from scipy.stats import beta
 import matplotlib.pyplot as plt
 from time import time
 
+# TODO:
+# [] Add sparse matrices for create_words
+# [] Consider splitting Model into Model and ExpDistribution\
+# [] Add ERGM example
+# [] Add KIsing example
+# [] Add RBM example
+# [] 
+
 def clopper_pearson(k,n,alpha):
     """
     http://en.wikipedia.org/wiki/Binomial_proportion_confidence_interval

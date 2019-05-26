@@ -7,7 +7,6 @@ from jax.experimental import optimizers
 from jax.scipy.special import logsumexp
 from jax.config import config; config.update("jax_enable_x64", True)
 
-
 import numpy as onp
 from functools import partial
 import itertools as it
@@ -24,6 +23,10 @@ from time import time
 # [] Add KIsing example
 # [] Add RBM example
 # [] 
+
+# temporary hack until installation issues on cluster are fixed
+import os
+os.environ["XLA_FLAGS"]="--xla_gpu_cuda_data_dir=/apps/RH7U2/general/cuda/10.0/"
 
 def clopper_pearson(k,n,alpha):
     """

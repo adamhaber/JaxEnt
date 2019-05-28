@@ -160,7 +160,7 @@ class Model:
     def create_words(self):
         return None
 
-    def train_exhuastive(self,data,data_kind="samples",data_n_samp=None,alpha=0.32,loss_kind="mean",step_size=3e-3,threshold=1.):
+    def train_exhuastive(self,data,data_kind="samples",data_n_samp=None,alpha=0.32,loss_kind="mean",lr=3e-3,threshold=1.):
         if data_kind=="samples":
             self.empirical_marginals = self.calc_marginals(data)
             (lower, upper) = clopper_pearson(self.empirical_marginals * data.shape[0], data.shape[0], alpha)
@@ -173,7 +173,7 @@ class Model:
         if self.words is None:
             self.create_words()
 
-        opt_init, opt_update, get_params = optimizers.adam(step_size)
+        opt_init, opt_update, get_params = optimizers.adam(lr)
 
         @jit
         def step(i,opt_state):
@@ -199,7 +199,7 @@ class Model:
         self.Z = np.exp(self.calc_logZ(self.calc_logp_unnormed(self.factors)))
         self.entropy = -np.sum(self.p_model*np.log(self.p_model))
 
-    def train_sample(self,data,data_kind="samples",data_n_samp=None,alpha=0.32,loss_kind="mean",step_size=3e-3,threshold=1.):
+    def train_sample(self,data,data_kind="samples",data_n_samp=None,alpha=0.32,loss_kind="mean",lr=3e-3,threshold=1.):
         if data_kind=="samples":
             self.empirical_marginals = self.calc_marginals(data)
             (lower, upper) = clopper_pearson(self.empirical_marginals * data.shape[0], data.shape[0], alpha)
@@ -209,7 +209,7 @@ class Model:
             (lower, upper) = clopper_pearson(self.empirical_marginals * data_n_samp, data_n_samp, alpha)
             self.empirical_std = upper - lower
 
-        opt_init, opt_update, get_params = optimizers.adam(step_size)
+        opt_init, opt_update, get_params = optimizers.adam(lr)
 
         @jit
         def step(i, opt_state):

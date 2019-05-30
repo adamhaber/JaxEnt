@@ -82,7 +82,7 @@ class Model:
     def sample(self,key,n_samps,factors):
         state = random.randint(key,minval=0,maxval=2, shape=(self.N,))
         unifs = random.uniform(key, shape=(n_samps*self.N,))
-
+        @jit
         def run_mh(j, loop_carry):
             state, all_states = loop_carry
             all_states = index_update(all_states,j//self.N,state)  # a bit wasteful
@@ -160,7 +160,7 @@ class Model:
     def create_words(self):
         return None
 
-    def train_exhuastive(self,data,data_kind="samples",data_n_samp=None,alpha=0.32,loss_kind="mean",lr=3e-3,threshold=1.):
+    def train_exhuastive(self,data,data_kind="samples",data_n_samp=None,alpha=0.32,loss_kind="mean",lr=1e-1,threshold=1.):
         if data_kind=="samples":
             self.empirical_marginals = self.calc_marginals(data)
             (lower, upper) = clopper_pearson(self.empirical_marginals * data.shape[0], data.shape[0], alpha)
@@ -180,26 +180,34 @@ class Model:
             params = get_params(opt_state)
             model_marg = self.calc_marginals_ex(self.words, self._calc_p(params))
             g = self.empirical_marginals-model_marg
-            return opt_update(i, g, opt_state)
+            return opt_update(i, g, opt_state),model_marg
 
         opt_state = opt_init(self.factors)
+
         @jit
         def training_loop(loop_carry):
-                    i,opt_state, params = loop_carry
-                    opt_state = step(i,opt_state)
+                    i,opt_state, params,_ = loop_carry
+                    opt_state,marginals = step(i,opt_state)
                     params = get_params(opt_state)
-                    return i+1,opt_state, params
+                    return i+1,opt_state, params,marginals
+        # training_steps, opt_state, params = while_loop(lambda x: x[0] > 0,training_loop, (0,opt_state, self.factors))
         # opt_state, params = fori_loop(0, epochs, training_loop, (opt_state, self.factors))
-        training_steps, opt_state, params = while_loop(lambda x: self.loss_marg_max_ex(x[2])>threshold,training_loop, (0,opt_state, self.factors))
+        self.model_marg = self.calc_marginals_ex(self.words, self._calc_p(self.factors))
+        training_steps, opt_state, params,marginals = while_loop(lambda x: np.max(self.calc_deviations(x[3])) > threshold,training_loop, (0,opt_state, self.factors,self.model_marg))
+
+        # training_steps, opt_state, params = fori_loop(0, 1000, training_loop, (0,opt_state, self.factors))
+
+        # while np.max(self.calc_deviations(self.model_marg))>threshold:
+        #     training_steps, opt_state, params = fori_loop(0, 1000, training_loop, (training_steps,opt_state,params))
 
         self.factors = params
         self.training_steps = training_steps
         self.p_model = self._calc_p(self.factors)
-        self.model_marg = self.calc_marginals_ex(self.words, self.p_model)
+        self.model_marg = marginals
         self.Z = np.exp(self.calc_logZ(self.calc_logp_unnormed(self.factors)))
         self.entropy = -np.sum(self.p_model*np.log(self.p_model))
 
-    def train_sample(self,data,data_kind="samples",data_n_samp=None,alpha=0.32,loss_kind="mean",lr=3e-3,threshold=1.):
+    def train_sample(self,data,data_kind="samples",data_n_samp=None,alpha=0.32,loss_kind="mean",lr=1e-1,threshold=1.):
         if data_kind=="samples":
             self.empirical_marginals = self.calc_marginals(data)
             (lower, upper) = clopper_pearson(self.empirical_marginals * data.shape[0], data.shape[0], alpha)
@@ -212,7 +220,7 @@ class Model:
         opt_init, opt_update, get_params = optimizers.adam(lr)
 
         @jit
-        def step(i, opt_state):
+        def step(i,opt_state):
             params = get_params(opt_state)
             samples = self.sample(random.PRNGKey(onp.random.randint(0,10000)),5000,params)
             model_marg = self.calc_marginals(samples)
@@ -220,21 +228,22 @@ class Model:
             return opt_update(i, g, opt_state),model_marg
 
         opt_state = opt_init(self.factors)
-        
+
         @jit
-        def training_loop(j,loop_carry):
-            opt_state, params,_ = loop_carry
-            opt_state,marginals = step(j , opt_state)
-            params = get_params(opt_state)
-            return opt_state, params,marginals
+        def training_loop(loop_carry):
+                    i,opt_state, params,_ = loop_carry
+                    opt_state,marginals = step(i,opt_state)
+                    params = get_params(opt_state)
+                    return i+1,opt_state, params,marginals
+        self.model_marg = self.calc_marginals(self.sample(random.PRNGKey(onp.random.randint(0,10000)),5000,self.factors))
+        training_steps, opt_state, params,marginals = while_loop(lambda x: np.max(self.calc_deviations(x[3])) > threshold,training_loop, (0,opt_state, self.factors,self.model_marg))
 
-        opt_state, self.factors,self.model_marg = fori_loop(0, 1000, training_loop, (opt_state, self.factors,np.zeros(len(self.funcs))))
-
-        while np.max(self.calc_deviations(self.model_marg))>threshold:
-            opt_state, self.factors,self.model_marg = fori_loop(0, 1000, training_loop, (opt_state, self.factors,self.model_marg))
-        # training_steps, opt_state, self.factors,self.model_marg = while_loop(lambda x: np.max(while_cond(x[2]))>threshold,training_loop, (0,opt_state,self.factors,np.zeros(len(self.funcs))))
-        # self.factors = params
-        # self.model_marg = self.calc_marginals(self.sample(random.PRNGKey(0),100000,params))
+        self.factors = params
+        self.training_steps = training_steps
+        self.model_marg = marginals
+        # self.p_model = self._calc_p(self.factors)
+        # self.Z = np.exp(self.calc_logZ(self.calc_logp_unnormed(self.factors)))          ##need wang landau
+        # self.entropy = -np.sum(self.p_model*np.log(self.p_model))
 
 class Ising(Model):
     def __init__(self,N):

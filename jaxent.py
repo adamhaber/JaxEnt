@@ -20,9 +20,12 @@ from time import time
 # [] Add sparse matrices for create_words
 # [] Consider splitting Model into Model and ExpDistribution\
 # [] Add ERGM example
-# [] Add KIsing example
+# [v] Add KIsing example
 # [] Add RBM example
-# [] 
+# [] Profiling using asv: https://github.com/airspeed-velocity/asv
+# [] Add some max_iterations flag for training
+# [] implement wang landau
+# [] implement memory in train_sample
 
 # temporary hack until installation issues on cluster are fixed
 import os
@@ -161,15 +164,15 @@ class Model:
         return None
 
     def train_exhuastive(self,data,data_kind="samples",data_n_samp=None,alpha=0.32,loss_kind="mean",lr=1e-1,threshold=1.):
+        if data_n_samp is None:
+            data_n_samp = data.shape[0]
+
         if data_kind=="samples":
             self.empirical_marginals = self.calc_marginals(data)
-            (lower, upper) = clopper_pearson(self.empirical_marginals * data.shape[0], data.shape[0], alpha)
-            self.empirical_std = upper - lower
         elif data_kind=="marginals":
             self.empirical_marginals = data
-            (lower, upper) = clopper_pearson(self.empirical_marginals * data_n_samp, data_n_samp, alpha)
-            self.empirical_std = upper - lower
-            # self.empirical_std = data_std
+        (lower, upper) = clopper_pearson(self.empirical_marginals * data_n_samp, data_n_samp, alpha)
+        self.empirical_std = upper - lower
         if self.words is None:
             self.create_words()
 
@@ -208,14 +211,21 @@ class Model:
         self.entropy = -np.sum(self.p_model*np.log(self.p_model))
 
     def train_sample(self,data,data_kind="samples",data_n_samp=None,alpha=0.32,loss_kind="mean",lr=1e-1,threshold=1.):
+        # GRADIENT_MEMORY_SIZE = 30
+        # MIN_NSAMPLES_BASE = 1000.
+        # NSAMPLES_INCREASE = 1.01
+        # curr_nsamples = MIN_NSAMPLES_BASE
+        # max_nsamples = onp.ceil(2 * data_n_samp / (threshold ** 2))
+
+        if data_n_samp is None:
+            data_n_samp = data.shape[0]
+
         if data_kind=="samples":
             self.empirical_marginals = self.calc_marginals(data)
-            (lower, upper) = clopper_pearson(self.empirical_marginals * data.shape[0], data.shape[0], alpha)
-            self.empirical_std = upper - lower
         elif data_kind=="marginals":
             self.empirical_marginals = data
-            (lower, upper) = clopper_pearson(self.empirical_marginals * data_n_samp, data_n_samp, alpha)
-            self.empirical_std = upper - lower
+        (lower, upper) = clopper_pearson(self.empirical_marginals * data_n_samp, data_n_samp, alpha)
+        self.empirical_std = upper - lower
 
         opt_init, opt_update, get_params = optimizers.adam(lr)
 

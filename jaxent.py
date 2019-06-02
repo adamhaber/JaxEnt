@@ -286,8 +286,30 @@ class Indep(Model):
     def create_words(self):
         self.words = np.array(onp.fliplr(list(it.product([0,1],repeat=self.N))))
 
-# class KIsing(Model):
-#     def __init__():
-#         super().__init__()
-#         # some sparse matrix for energy calculations?
+class KIsing(Model):
+    def __init__(self,N):
+        marg_1 = lambda i,x:x[i]
+        marg_2 = lambda i,j,x:x[i]*x[j]
+        marg_3 = lambda i,x:np.sum(x)==i
+        marg_1s = [jit(partial(marg_1,i)) for i in range(N)]
+        marg_2s = [jit(partial(marg_2,i,j)) for i,j in list(it.combinations(range(N),r=2))]
+        marg_3s = [jit(partial(marg_3,i)) for i in range(N+1)]
+        super().__init__(N,funcs=marg_1s+marg_2s+marg_3s)
+        self.k_sync_factors_start_idx = len(marg_1s + marg_2s)
+        
+    def calc_e(self,factors,word):
+        # return np.sum(factors[:self.N]*word[:self.N]) + np.sum(factors[self.N:]*np.outer(word,word)[self.idx[0],self.idx[1]])
+        return factors[:self.k_sync_factors_start_idx]@np.concatenate([word,np.outer(word,word)[onp.triu_indices(self.N,1)]])+factors[self.k_sync_factors_start_idx:][np.sum(word)]#self.idx[0],self.idx[1]]])
     
+    def calc_logp_unnormed(self,factors):
+        return -self.words@factors
+    
+    def create_words(self):
+        words = np.array(onp.fliplr(list(it.product([0,1],repeat=self.N))))
+        k_sync_idx = words.sum(1)
+        k_sync = onp.zeros((words.shape[0],self.N+1))
+        k_sync[onp.arange(words.shape[0]),k_sync_idx] = 1
+        self.words = np.array(onp.hstack([words,onp.stack([onp.outer(word,word)[onp.triu_indices(self.N,1)] for word in words]),k_sync]))
+
+    def calc_marginals_ex(self,words,ps):
+        return self.words.T@ps

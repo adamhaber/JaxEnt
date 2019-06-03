@@ -27,16 +27,29 @@ from time import time
 # [] implement wang landau
 # [] implement memory in train_sample
 # [] Add more efficient implementation of isingNN 
+# [] Raise execption if an exhuastive function is called with N>20. Decorator? 
 
 # temporary hack until installation issues on cluster are fixed
 import os
 os.environ["XLA_FLAGS"]="--xla_gpu_cuda_data_dir=/apps/RH7U2/general/cuda/10.0/"
 
 def clopper_pearson(k,n,alpha):
-    """
+    """Confidence intervals for a binomial distribution of k expected successes on n trials:
     http://en.wikipedia.org/wiki/Binomial_proportion_confidence_interval
-    alpha confidence intervals for a binomial distribution of k expected successes on n trials
-    Clopper Pearson intervals are a conservative estimate.
+
+    Parameters
+    ----------
+    k : array_like
+        number of successes
+    n : array_like
+        number of trials
+    alpha : float
+        confidence level
+
+    Returns
+    -------
+    hi, lo : array_like
+        lower and upper bounds on the expected number of successes
     """
     lo = beta.ppf(alpha/2, k, n-k+1)
     lo[onp.isnan(lo)] = 0   # hack to remove NaNs where we only have 0 samples
@@ -81,9 +94,39 @@ class Model:
 
 
     def calc_e(self,factors,word):
+        """calc the energy of a single binary word
+        
+        Parameters
+        ----------
+        factors : array_like
+            factors of the distribution
+        word : array_like, binary
+            a single binary vector
+        
+        Returns
+        -------
+        float
+            energy value
+        """
         return np.sum(factors*np.array([func(word) for func in self.funcs]))
 
     def sample(self,key,n_samps,factors):
+        """generate samples from a distributions with a given set of factors
+        
+        Parameters
+        ----------
+        key : jax.random.PRNGKey
+            jax random number generator 
+        n_samps : int
+            number of samples to generate
+        factors : array_like
+            factors of the distribution
+        
+        Returns
+        -------
+        array_like
+            [description]
+        """
         state = random.randint(key,minval=0,maxval=2, shape=(self.N,))
         unifs = random.uniform(key, shape=(n_samps*self.N,))
         @jit
@@ -101,26 +144,97 @@ class Model:
         return all_states[1]
 
     def calc_logp_unnormed(self,factors):
+        """calc the log of the normalized probability distribution with the given factors, 
+        before normalization (substraction of log of the partition function).
+        Only possible for N<=20, since the entire probability distribution needs to fit in memory.
+
+        Parameters
+        ----------
+        factors : array_like
+            factors of the distribution
+        
+        Returns
+        -------
+        logp_unnormed
+            array of log probabilities, before substraction of log of the partition function
+        """
         e_per_word=jit(partial(self.calc_e,factors))
         e_all_words=jit(vmap(e_per_word))(self.words)
         logp_unnormed = -e_all_words
         return logp_unnormed
 
+    def wang_landau(self,factors):
+        raise NotImplementedError
+
     def calc_logZ(self,logp_unnormed):
+        """calc partition function of an unnormalized probability distribution.
+        Only possible for N<=20, since the entire probability distribution needs to fit in memory.
+        For N>20, use wang_landau to estimate the parition function, instead.
+        
+        Parameters
+        ----------
+        logp_unnormed : array_like
+             the unnormalized probability distribution
+        
+        Returns
+        -------
+        float
+            value of the partition function
+        """
         logZ = logsumexp(logp_unnormed)
         return logZ
     
     def calc_logp(self,factors):
+        """calc the log of the normalized probability distribution with the given factors, 
+        after normalization (substraction of log of the partition function).
+        Only possible for N<=20, since the entire probability distribution needs to fit in memory.
+        
+        Parameters
+        ----------
+        factors : array_like
+            factors of the distribution
+        
+        Returns
+        -------
+        logp_unnormed
+            array of log probabilities, after substraction of log of the partition function
+        """
         logp_unnormed = self.calc_logp_unnormed(factors)
         logZ = self.calc_logZ(logp_unnormed)
         logp = logp_unnormed - logZ
         return logp
 
     def _calc_p(self,factors):
+        """calc the normalized probability distribution with the given factors.
+        Only possible for N<=20, since the entire probability distribution needs to fit in memory.
+        
+        Parameters
+        ----------
+        factors : array_like
+            factors of the distribution
+        
+        Returns
+        -------
+        p
+            array of probabilities.
+        """
         logp = self.calc_logp(factors)
         return np.exp(logp)
     
     def calc_p(self,factors):
+        """calc the normalized probability distribution with the given factors, and sets the corresponding class attribute.  
+        Only possible for N<=20, since the entire probability distribution needs to fit in memory.
+        
+        Parameters
+        ----------
+        factors : array_like
+            factors of the distribution
+        
+        Returns
+        -------
+        p
+            array of probabilities.
+        """
         if self.p_model is None:
             self.p_model = self._calc_p(factors)
         return self.p_model

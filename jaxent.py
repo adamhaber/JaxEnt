@@ -26,6 +26,7 @@ from time import time
 # [] Add some max_iterations flag for training
 # [] implement wang landau
 # [] implement memory in train_sample
+# [] Add more efficient implementation of isingNN 
 
 # temporary hack until installation issues on cluster are fixed
 import os
@@ -278,7 +279,6 @@ class Ising(Model):
     def calc_marginals_ex(self,words,ps):
         return self.words.T@ps
 
-
 class Indep(Model):
     def __init__(self,N):
         marg_1 = lambda i,x:x[i]
@@ -323,3 +323,42 @@ class KIsing(Model):
 
     def calc_marginals_ex(self,words,ps):
         return self.words.T@ps
+
+class IsingNN(Model):
+    def __init__(self,N):
+        marg_1 = lambda i,x:x[i]
+        marg_2 = lambda i,j,x:x[i]*x[j]
+        pairs_h = []
+        pairs_v = []
+        N_new = int(N**0.5)
+        for i in range(N_new):
+            for j in range(N_new):
+                pairs_h.append((i*N_new+j,i*N_new+(j+1)%N_new))
+                pairs_v.append((i+j*N_new,(i+(j+1)*N_new)%N))
+        pairs = pairs_h + pairs_v
+        marg_1s = [jit(partial(marg_1,i)) for i in range(N)]
+        marg_2s = [jit(partial(marg_2,i,j)) for i,j in pairs]
+        self.pairs = np.array(onp.array(pairs))
+        super().__init__(N,funcs=marg_1s+marg_2s)
+        
+    def calc_e(self,factors,word):
+        # return np.sum(factors[:self.N]*word[:self.N]) + np.sum(factors[self.N:]*np.outer(word,word)[self.idx[0],self.idx[1]])
+        fields = factors[:self.N]@word
+        corrs = 0
+        for f,(i,j) in zip(factors[self.N:],self.pairs):
+            corrs += f*word[i]*word[j]
+        return fields+corrs
+        # np.concatenate([word,np.outer(word,word)[onp.triu_indices(self.N,1)]])+factors[self.k_sync_factors_start_idx:][np.sum(word)]#self.idx[0],self.idx[1]]])
+    
+    # def calc_logp_unnormed(self,factors):
+    #     return -self.words@factors
+    
+    # def create_words(self):
+    #     words = np.array(onp.fliplr(list(it.product([0,1],repeat=self.N))))
+    #     k_sync_idx = words.sum(1)
+    #     k_sync = onp.zeros((words.shape[0],self.N+1))
+    #     k_sync[onp.arange(words.shape[0]),k_sync_idx] = 1
+    #     self.words = np.array(onp.hstack([words,onp.stack([onp.outer(word,word)[onp.triu_indices(self.N,1)] for word in words]),k_sync]))
+
+    # def calc_marginals_ex(self,words,ps):
+    #     return self.words.T@ps

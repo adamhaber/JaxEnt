@@ -327,3 +327,13 @@ class IsingNN(Model):
 
     # def calc_marginals_ex(self,words,ps):
     #     return self.words.T@ps
+
+class ERGM(Model):
+    def __init__(self,N,funcs):
+        self.num_of_nodes = N
+        self.num_of_edges = N*(N-1)
+        self.diag_idx = onp.arange(0.,N*N,N,dtype=int)
+        super().__init__(self.num_of_edges,funcs=funcs)
+
+    def insert_diag(self,x):
+        return onp.insert(x,0,axis=1)      ## to replace by np.insert when it's implemented

@@ -13,7 +13,7 @@ def test_indep_calc_marginals_ex():
     m = Indep(N_indep)
     m.create_words()
     m.calc_p(indep_factors)
-    model_marg = m.calc_marginals_ex(m.words,m.p_model)
+    model_marg = m.calc_marginals_ex(m.p_model)
     assert onp.array(indep_marg)==pytest.approx(onp.array(model_marg))
 
 def test_indep_train_exhuastive_from_marginals(lr=1e-1):
@@ -103,7 +103,7 @@ def test_ising_calc_marginals_ex():
     m = Ising(N_ising)
     m.create_words()
     m.calc_p(ising_factors)
-    model_marg = m.calc_marginals_ex(m.words,m.p_model)
+    model_marg = m.calc_marginals_ex(m.p_model)
     assert onp.array(ising_marg)==pytest.approx(onp.array(model_marg))
 
 def test_ising_train_exhuastive_from_marginals():

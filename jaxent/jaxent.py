@@ -64,7 +64,7 @@ class Model:
         self.entropy = None
         self.Z = None
         self.factors = np.zeros(len(funcs))
-        self.model_marg = None
+        self.model_marginals = None
         self.empirical_marginals = None
         self.empirical_std = None
         self.p_model = None
@@ -75,21 +75,15 @@ class Model:
         self.N_exhuastive_max = N_exhuastive_max
 
         self.calc_e = jit(self.calc_e)
-        self.sample = jit(self.sample, static_argnums=(1,))
+        self._sample = jit(self._sample, static_argnums=(1,))
         self.calc_logp_unnormed = jit(self.calc_logp_unnormed)
         self.calc_logZ = jit(self.calc_logZ)
         self.calc_logp = jit(self.calc_logp)
         self._calc_p = jit(self._calc_p)
+        self._calc_entropy = jit(self._calc_entropy)
         self.calc_marginals = jit(self.calc_marginals)#,static_argnums=(1,))
         self.calc_marginals_ex = jit(self.calc_marginals_ex)#,static_argnums=(1,))
         self.calc_deviations = jit(self.calc_deviations)
-
-    # def ex(self,func):   
-    #     def inner1(func): 
-    #         if self.N>self.N_exhuastive_max:
-    #             raise ValueError("Can't call an exhuative method on this number of units")             
-    #         return func
-    #     return inner1(func)
   
     def calc_e(self,factors,word):
         """calc the energy of a single binary word
@@ -108,7 +102,24 @@ class Model:
         """
         return np.sum(factors*np.array([func(word) for func in self.funcs]))
 
-    def sample(self,key,n_samps,factors):
+    def sample(self,key,n_samps):
+        """generate samples from a distributions with the model factors
+        
+        Parameters
+        ----------
+        key : jax.random.PRNGKey
+            jax random number generator 
+        n_samps : int
+            number of samples to generate
+        
+        Returns
+        -------
+        array_like
+            samples from the model
+        """
+        return self._sample(key,n_samps,self.factors)
+
+    def _sample(self,key,n_samps,factors):
         """generate samples from a distributions with a given set of factors
         
         Parameters
@@ -123,7 +134,7 @@ class Model:
         Returns
         -------
         array_like
-            [description]
+            samples from the model
         """
         state = random.randint(key,minval=0,maxval=2, shape=(self.N,))
         unifs = random.uniform(key, shape=(n_samps*self.N,))
@@ -339,7 +350,7 @@ class Model:
         @jit
         def _training_step(i,opt_state):
             params = get_params(opt_state)
-            samples = self.sample(random.PRNGKey(onp.random.randint(0,10000)),5000,params)
+            samples = self._sample(random.PRNGKey(onp.random.randint(0,10000)),5000,params)
             model_marg = self.calc_marginals(samples)
             g = self.empirical_marginals-model_marg
             return opt_update(i, g, opt_state),model_marg
@@ -358,25 +369,29 @@ class Model:
             step = _training_step_ex
             if self.words is None:
                 self.create_words()
-            self.model_marg = self.calc_marginals_ex(self._calc_p(self.factors))
+            self.model_marginals = self.calc_marginals_ex(self._calc_p(self.factors))
         elif kind=='sample':
             step = _training_step
-            self.model_marg = self.calc_marginals(self.sample(random.PRNGKey(onp.random.randint(0,10000)),n_samps,self.factors))
+            self.model_marginals = self.calc_marginals(self._sample(random.PRNGKey(onp.random.randint(0,10000)),n_samps,self.factors))
 
         self.calc_empirical_marginals_and_stds(data,data_kind,data_n_samp,alpha)
     
         opt_init, opt_update, get_params = optimizers.adam(lr)
-        training_steps, opt_state, params,marginals = while_loop(lambda x: np.max(self.calc_deviations(x[3])) > threshold,_training_loop, (0,opt_init(self.factors), self.factors,self.model_marg))
+        training_steps, opt_state, params,marginals = while_loop(lambda x: np.max(self.calc_deviations(x[3])) > threshold,_training_loop, (0,opt_init(self.factors), self.factors,self.model_marginals))
         
         self.factors = params
         self.training_steps = training_steps
-        self.model_marg = marginals
+        self.model_marginals = marginals
         self.trained = True
 
         if kind=='exhuastive':
             self.p_model = self._calc_p(self.factors)
-            self.Z = np.exp(self.calc_logZ(self.calc_logp_unnormed(self.factors)))   ##needs wang-landau for sampled case
-            self.entropy = -np.sum(self.p_model*np.log(self.p_model))
+            self.Z = np.exp(self.calc_logZ(self.calc_logp_unnormed(self.factors)))  
+            self.entropy = self._calc_entropy()
+
+    def _calc_entropy(self):
+        if self.p_model is not None:
+            return -np.sum(self.p_model*np.log2(self.p_model))
 
 class Ising(Model):
     def __init__(self,N):

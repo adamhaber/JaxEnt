@@ -1,8 +1,8 @@
 # JaxEnt
-A [JAX](https://github.com/google/jax)-based python package for maximum entropy modelling of binary data. 
+A [JAX](https://github.com/google/jax)-based python package for maximum entropy modeling of binary data. 
 
 ## What is JaxEnt?
-JaxEnt is a small, lightweight python package for fitting, sampling and constructing maximum entropy distributions with arbitrary constraints (almost; see below). As the name suggests, JaxEnt uses [JAX](https://github.com/google/jax) to get JIT compilation to CPU/GPU/TPU. JaxEnt is a research project under active development. Expect `NotImplementedError`s, and possibly some API breaking changes as JaxEnt gradually support more usecases.
+JaxEnt is a small, lightweight python package for fitting, sampling from and computing various quantities of maximum entropy distributions with arbitrary constraints (almost; see below). As the name suggests, JaxEnt uses [JAX](https://github.com/google/jax) to get JIT compilation of various function to CPU/GPU/TPU. JaxEnt is a research project under active development (as is JAX itself). Expect `NotImplementedError`-s, and possibly future API breaking changes as JaxEnt gradually support more usecases.
  
 ## Installation
 
@@ -19,51 +19,57 @@ You can also install JaxEnt from source:
 ```
 git clone https://github.com/adamhaber/jaxent.git
 # install jax/jaxlib first for CUDA support
-pip install -e .[dev]
+pip install -e .
 ```
 
 ## Examples
-Maximum entropy distributions over binary variables are very common in a wide variety of fields and applications. Examples include: **(add links)**
- - Pairwise, K-Synchrony and Random Projection models in neuroscience
- - Exponential Random Graph Models (ERGMs) in networks science
- - Ising Model in statistical physics
- - Restricted Boltzmann Machines in machine learning
+Maximum entropy distributions over binary variables are very common in a wide variety of fields and applications. Examples include:
+ - [Pairwise](https://www.princeton.edu/~wbialek/rome/refs/schneidman+al_06.pdf), [K-Ising](https://journals.plos.org/ploscompbiol/article/file?id=10.1371/journal.pcbi.1003408&type=printable) and [Random Projection](https://www.biorxiv.org/content/10.1101/478545v1.article-info) models in neuroscience
+ - [Exponential Random Graph Models](https://en.wikipedia.org/wiki/Exponential_random_graph_models) (ERGMs) in networks science
+ - [Ising Model](https://en.wikipedia.org/wiki/Ising_model) in statistical physics
+ - [Restricted Boltzmann Machines](https://en.wikipedia.org/wiki/Restricted_Boltzmann_machine) in machine learning
  
 Here's an example of generating fake data from one Ising model, and fitting a different model to the same data: 
 
+```python
+from jaxent import jaxent
+import numpy as onp
+import jax.numpy as np
+import matplotlib.pyplot as plt
+import jax
+
+N = 15
+n_data_points = 10000
+
+# create an all-to-all-connectivity Ising model with random biases and couplings
+m = jaxent.Ising(N)
+m.factors = np.array(onp.concatenate([onp.random.normal(3,1,N),onp.random.normal(-0.1,0.05,N*(N-1)//2)]))
+
+# sample from the model
+emp_data = m.sample(jax.random.PRNGKey(0),n_data_points)
+
+# create a new model and train it using the data generate from the first model
+m2 = jaxent.Ising(N)
+m2.train(emp_data)
 ```
-bla bla
-```
+The marginals of `m2` are all within the (normalized) errorbars of the original data:
+
+![readme figure](https://user-images.githubusercontent.com/20320402/59023548-b794e980-8858-11e9-9350-6c7d252a25cc.png)
+
+
+
 
  ## Future Work
- 
-In the near term, we plan to work on the following. Please open new issues for feature requests and enhancements:
 
- - ...
- - ...
+ - Implememt Wang-Landau estimator of the partition function for larger models
+ - Further improve performance of sampling and training methods.
+ - Expand tests suite.
+ - Sparse matrices support
+  
+  Feature requests and improvement ideas are welcomed.
  
  ## Thanks
  -  Ori Maoz who wrote the original, excellent matlab maxent toolbox. I plagarised large parts of his API, readme, etc.
  -  yoni and omri
- 
- # put in a different file:
- ## Mathy background
-Loosely speaking, maximum entropy models give the "most uniform" probabilistic models of the states or configurations of a systems, given the mean values of some set of observed functions. More precisely, it is the solution of the following constrained optimization problem:
-minDkl(p,unif) subject to this and that constraints
-Conceptually, they can be thought of as models that reproduce some observed behavior, but assume nothing else. This may sounds isoteric, but in the real values case, many distributions are maxent distributions - gaussians, log-normal, poisson, ...
-
-## How does it work?
-In a typical usecase, we start from an assumed parametric form (that is, a set of functions in the exponent) and desired expectation values of the model. Our goal is to find the parameters \lambda_i that will produce the desired EVs. To do so, we:  
-1. Start from a random set of parameters.
-2. Compute expectation values wrt these parameters.
-3. Update the parameters in the direction of the gradient (which is the difference of model and desired EVs)
-4. Measure if we've converged, if not - repeat.
-Since the size of our sample space (and therefor the size of explicit probability vector) is 2^N, there's a "representational watershed" around N~25 - we simply can't store the whole vector in memory, which makes analytic computations of model marginals impossible. Instead, we use 
-
-## Gory details
-Various technical details - only for the highly determined.
- -  How convergence is determined.
- -  Metropolis Hastings sampling from the model.
-
 
  

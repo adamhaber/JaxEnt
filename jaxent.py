@@ -58,33 +58,41 @@ def clopper_pearson(k,n,alpha):
     return lo, hi
 
 class Model:
-    def __init__(self,N,funcs,N_exhuastive_max=20):
+
+    def __init__(self,N,funcs):
         self.N = N
         self.funcs = funcs
         self.entropy = None
         self.Z = None
         self.factors = np.zeros(len(funcs))
-        self.model_marginals = None
+        self.model_marg = None
         self.empirical_marginals = None
         self.empirical_std = None
+        self.p_orig = None
         self.p_model = None
         self.words = None
         self.trained = False
         self.converged = False
         self.training_steps = 0
-        self.N_exhuastive_max = N_exhuastive_max
 
         self.calc_e = jit(self.calc_e)
-        self._sample = jit(self._sample, static_argnums=(1,))
+        self.sample = jit(self.sample, static_argnums=(1,))
         self.calc_logp_unnormed = jit(self.calc_logp_unnormed)
         self.calc_logZ = jit(self.calc_logZ)
         self.calc_logp = jit(self.calc_logp)
         self._calc_p = jit(self._calc_p)
-        self._calc_entropy = jit(self._calc_entropy)
         self.calc_marginals = jit(self.calc_marginals)#,static_argnums=(1,))
+        self.calc_normalized_errors = jit(self.calc_normalized_errors)#,static_argnums=(1,))
         self.calc_marginals_ex = jit(self.calc_marginals_ex)#,static_argnums=(1,))
+        self.calc_normalized_errors_ex = jit(self.calc_normalized_errors_ex)#,static_argnums=(1,))
+        self.loss_dkl = jit(self.loss_dkl)
         self.calc_deviations = jit(self.calc_deviations)
-  
+        self.loss_marg_max = jit(self.loss_marg_max)
+        self.loss_marg_mean = jit(self.loss_marg_mean)
+        self.loss_marg_max_ex = jit(self.loss_marg_max_ex)
+        self.loss_marg_mean_ex = jit(self.loss_marg_mean_ex)
+
+
     def calc_e(self,factors,word):
         """calc the energy of a single binary word
         
@@ -102,24 +110,7 @@ class Model:
         """
         return np.sum(factors*np.array([func(word) for func in self.funcs]))
 
-    def sample(self,key,n_samps):
-        """generate samples from a distributions with the model factors
-        
-        Parameters
-        ----------
-        key : jax.random.PRNGKey
-            jax random number generator 
-        n_samps : int
-            number of samples to generate
-        
-        Returns
-        -------
-        array_like
-            samples from the model
-        """
-        return self._sample(key,n_samps,self.factors)
-
-    def _sample(self,key,n_samps,factors):
+    def sample(self,key,n_samps,factors):
         """generate samples from a distributions with a given set of factors
         
         Parameters
@@ -134,7 +125,7 @@ class Model:
         Returns
         -------
         array_like
-            samples from the model
+            [description]
         """
         state = random.randint(key,minval=0,maxval=2, shape=(self.N,))
         unifs = random.uniform(key, shape=(n_samps*self.N,))
@@ -167,10 +158,9 @@ class Model:
         logp_unnormed
             array of log probabilities, before substraction of log of the partition function
         """
-        # e_per_word=jit(partial(self.calc_e,factors))
-        # e_all_words=jit(vmap(e_per_word))(self.words)
-        # logp_unnormed = -e_all_words
-        logp_unnormed = -self.words@factors
+        e_per_word=jit(partial(self.calc_e,factors))
+        e_all_words=jit(vmap(e_per_word))(self.words)
+        logp_unnormed = -e_all_words
         return logp_unnormed
 
     def wang_landau(self,factors):
@@ -206,7 +196,7 @@ class Model:
         
         Returns
         -------
-        array_like
+        logp_unnormed
             array of log probabilities, after substraction of log of the partition function
         """
         logp_unnormed = self.calc_logp_unnormed(factors)
@@ -225,7 +215,7 @@ class Model:
         
         Returns
         -------
-        array_like
+        p
             array of probabilities.
         """
         logp = self.calc_logp(factors)
@@ -242,7 +232,7 @@ class Model:
         
         Returns
         -------
-        array_like
+        p
             array of probabilities.
         """
         if self.p_model is None:
@@ -250,66 +240,57 @@ class Model:
         return self.p_model
 
     def calc_marginals(self,words):
-        """calc the mean parameters (expectation values of the constraint function).
+        """calc the marginals (expectation values) of 
         
         Parameters
         ----------
-        words : array_like
-            sample of binary words from which to compute the 
-
+        words : [type]
+            [description]
+        
         Returns
         -------
-        array_like
-            mean parameters
+        [type]
+            [description]
         """
-        marg = np.array([vmap(f)(words).mean() for f in self.funcs])
-        return marg
+        return np.array([vmap(f)(words).mean() for f in self.funcs])
 
     def calc_deviations(self,model_marg):
-        """calc how many (empirical) standard deviations is the model marginal from the empirical marginal, for all marginals
-        
-        Parameters
-        ----------
-        model_marg : array_like
-            model margianls
-        """
-        devs = np.abs(model_marg - self.empirical_marginals) / self.empirical_std
-        return devs
-        
-    def calc_marginals_ex(self,ps):
-        """calc the mean parameters (expectation values of the constraint function) analytically.
-        Only possible for N<=20, since the entire probability distribution needs to fit in memory.
-        
-        Parameters
-        ----------
-        ps : array_type
-            probability distribution w.r.t which the expectation values are computed
-        """
-        return ps@self.words
-        # return np.stack([vmap(f)(self.words) for f in self.funcs])@ps
+        return np.abs(model_marg - self.empirical_marginals) / self.empirical_std
+    
+    def calc_normalized_errors(self,factors):
+        samples = self.sample(random.PRNGKey(onp.random.randint(0,10000)),10000,factors)
+        model_marg = self.calc_marginals(samples)
+        normalized_errors = self.calc_deviations(model_marg)
+        return normalized_errors
+    
+    def calc_marginals_ex(self,words,ps):
+        return np.stack([vmap(f)(words) for f in self.funcs])@ps
+
+    def calc_normalized_errors_ex(self,factors):
+        model_marg = self.calc_marginals_ex(self.words, self._calc_p(factors))
+        normalized_errors = self.calc_deviations(model_marg)
+        return normalized_errors
+    
+    def loss_marg_mean(self,factors):
+        return np.mean(self.calc_normalized_errors(factors))
+
+    def loss_marg_mean_ex(self,factors):
+        return np.mean(self.calc_normalized_errors_ex(factors))
+
+    def loss_marg_max(self,factors):
+        return np.max(self.calc_normalized_errors(factors))
+
+    def loss_marg_max_ex(self,factors):
+        return np.max(self.calc_normalized_errors_ex(factors))
+
+    def loss_dkl(self,factors):
+        p_model = self._calc_p(factors,self.words)
+        return np.nansum(p_model*np.log2(p_model/self.p_orig))
 
     def create_words(self):
-        """create an array of all binary words, needed for exhuastive computations.
-        Only possible for N<=20, since the entire sample space needs to fit in memory.
-        """
         self.words = np.array(onp.fliplr(list(it.product([0,1],repeat=self.N))))
-        self.words = np.stack([vmap(f)(self.words) for f in self.funcs]).T
 
-    def calc_empirical_marginals_and_stds(self,data,data_kind,data_n_samp,alpha):
-        """compute expectation values and corresponding confidence intervals from empirical observations.
-        
-        Parameters
-        ----------
-        data : array_like
-            either an array of binary samples, or an array of desired marginals
-        data_kind : str
-            "samples" - data samples are passed
-            "marginals" - desired marginals are passed
-        data_n_samp : int
-            number of trials, needed to compute confidence intervals
-        alpha : float
-            confidence level
-        """
+    def calc_empirical_marginals(self,data,data_kind,data_n_samp,alpha):
         if data_n_samp is None:
             data_n_samp = data.shape[0]
 
@@ -321,39 +302,17 @@ class Model:
         self.empirical_std = upper - lower
             
     def train(self,data,data_kind="samples",data_n_samp=None,alpha=0.32,lr=1e-1,threshold=1.,kind=None,n_samps=5000):
-        """fit a maximum entropy model to data.
-        
-        Parameters
-        ----------
-        data : array_like
-            either an array of binary samples, or an array of desired marginals
-        data_kind : str, optional
-            "samples" - data samples are passed
-            "marginals" - desired marginals are passed
-        data_n_samp : int, optional
-            number of trials, needed to compute confidence intervals
-        alpha : float, optional
-            confidence level
-        lr : float, optional
-            learning rate, by default 1e-1
-        threshold : float, optional
-            maximum allowed difference between model marginals and empirical marginals, in empirical standard deviations units. by default 1
-        kind : str, optional
-            "exhuastive" means analytical computation of model marginals, "sample" means MCMC estimation, by default None and estimated from the number of units N.
-        n_samps : int, optional
-            number of samples to generate in each MCMC estimation of model marginals, by default 5000
-        """
         @jit
         def _training_step_ex(i,opt_state):
             params = get_params(opt_state)
-            model_marg = self.calc_marginals_ex(self._calc_p(params))
+            model_marg = self.calc_marginals_ex(self.words, self._calc_p(params))
             g = self.empirical_marginals-model_marg
             return opt_update(i, g, opt_state),model_marg
         
         @jit
         def _training_step(i,opt_state):
             params = get_params(opt_state)
-            samples = self._sample(random.PRNGKey(onp.random.randint(0,10000)),5000,params)
+            samples = self.sample(random.PRNGKey(onp.random.randint(0,10000)),5000,params)
             model_marg = self.calc_marginals(samples)
             g = self.empirical_marginals-model_marg
             return opt_update(i, g, opt_state),model_marg
@@ -372,29 +331,24 @@ class Model:
             step = _training_step_ex
             if self.words is None:
                 self.create_words()
-            self.model_marginals = self.calc_marginals_ex(self._calc_p(self.factors))
+            self.model_marg = self.calc_marginals_ex(self.words, self._calc_p(self.factors))
         elif kind=='sample':
             step = _training_step
-            self.model_marginals = self.calc_marginals(self._sample(random.PRNGKey(onp.random.randint(0,10000)),n_samps,self.factors))
+            self.model_marg = self.calc_marginals(self.sample(random.PRNGKey(onp.random.randint(0,10000)),n_samps,self.factors))
 
-        self.calc_empirical_marginals_and_stds(data,data_kind,data_n_samp,alpha)
+        self.calc_empirical_marginals(data,data_kind,data_n_samp,alpha)
     
         opt_init, opt_update, get_params = optimizers.adam(lr)
-        training_steps, opt_state, params,marginals = while_loop(lambda x: np.max(self.calc_deviations(x[3])) > threshold,_training_loop, (0,opt_init(self.factors), self.factors,self.model_marginals))
+        training_steps, opt_state, params,marginals = while_loop(lambda x: np.max(self.calc_deviations(x[3])) > threshold,_training_loop, (0,opt_init(self.factors), self.factors,self.model_marg))
         
         self.factors = params
         self.training_steps = training_steps
-        self.model_marginals = marginals
-        self.trained = True
+        self.model_marg = marginals
 
-        if kind=='exhuastive':
+        if kind=='exhuasitve':
             self.p_model = self._calc_p(self.factors)
-            self.Z = np.exp(self.calc_logZ(self.calc_logp_unnormed(self.factors)))  
-            self.entropy = self._calc_entropy()
-
-    def _calc_entropy(self):
-        if self.p_model is not None:
-            return -np.sum(self.p_model*np.log2(self.p_model))
+            self.Z = np.exp(self.calc_logZ(self.calc_logp_unnormed(self.factors)))   ##needs wang-landau for sampled case
+            self.entropy = -np.sum(self.p_model*np.log(self.p_model))
 
 class Ising(Model):
     def __init__(self,N):
@@ -406,38 +360,18 @@ class Ising(Model):
         super().__init__(N,funcs=marg_1s+marg_2s)
         
     def calc_e(self,factors,word):
+        # return np.sum(factors[:self.N]*word[:self.N]) + np.sum(factors[self.N:]*np.outer(word,word)[self.idx[0],self.idx[1]])
         return factors@np.concatenate([word,np.outer(word,word)[onp.triu_indices(self.N,1)]])#self.idx[0],self.idx[1]]])
     
-class MERP(Model):
-    def __init__(self,N,nprojections=None, indegree=5, threshold=0.1, projections=None, projections_thresholds=None,seed=0):
-        if projections is not None:
-            self.projections = projections
-            self._n_projections = projections.shape[0]
-        else:
-            if nprojections is None:
-                self._n_projections = N * (N + 1) // 2  # default - same number of factors as ising
-            elif type(nprojections) == int:
-                self._n_projections = nprojections
-            else:
-                raise TypeError('nprojections must be an integer')
-
-            key = random.PRNGKey(seed)
-            projections = random.normal(key,shape=(self._n_projections, N))+1
-            sparsity = indegree / N
-            self.projections = np.where(random.uniform(key,shape=(self._n_projections, N)) > sparsity, 0, projections)
-        if projections_thresholds is None:
-            self.projections_thresholds = np.ones(self._n_projections) * threshold * indegree
-        else:
-            self.projections_thresholds = projections_thresholds
-
-        proj = lambda i,x:np.where(self.projections[i]@x>self.projections_thresholds[i],1,0)
-
-        projs = [jit(partial(proj,i)) for i in range(self._n_projections)]
-        super().__init__(N,funcs=projs)
-        
-    def calc_e(self,factors,word):
-        # return np.sum(factors[:self.N]*word[:self.N]) + np.sum(factors[self.N:]*np.outer(word,word)[self.idx[0],self.idx[1]])
-        return factors@np.where(self.projections@word>self.projections_thresholds,1,0)
+    def calc_logp_unnormed(self,factors):
+        return -self.words@factors
+    
+    def create_words(self):
+        words = np.array(onp.fliplr(list(it.product([0,1],repeat=self.N))))
+        self.words = np.array(onp.hstack([words,onp.stack([onp.outer(word,word)[onp.triu_indices(self.N,1)] for word in words])]))
+    
+    def calc_marginals_ex(self,words,ps):
+        return self.words.T@ps
 
 class Indep(Model):
     def __init__(self,N):
@@ -447,7 +381,11 @@ class Indep(Model):
         self.calc_e = jit(self.calc_e)
 
     def calc_e(self,factors,word):
-        return factors@word    
+        # return np.sum(factors[:self.N]*word[:self.N]) + np.sum(factors[self.N:]*np.outer(word,word)[self.idx[0],self.idx[1]])
+        return factors@word
+    
+    def calc_logp_unnormed(self,factors):
+        return -self.words@factors
 
 class KIsing(Model):
     def __init__(self,N):
@@ -461,8 +399,22 @@ class KIsing(Model):
         self.k_sync_factors_start_idx = len(marg_1s + marg_2s)
         
     def calc_e(self,factors,word):
+        # return np.sum(factors[:self.N]*word[:self.N]) + np.sum(factors[self.N:]*np.outer(word,word)[self.idx[0],self.idx[1]])
         return factors[:self.k_sync_factors_start_idx]@np.concatenate([word,np.outer(word,word)[onp.triu_indices(self.N,1)]])+factors[self.k_sync_factors_start_idx:][np.sum(word)]#self.idx[0],self.idx[1]]])
     
+    def calc_logp_unnormed(self,factors):
+        return -self.words@factors
+    
+    def create_words(self):
+        words = np.array(onp.fliplr(list(it.product([0,1],repeat=self.N))))
+        k_sync_idx = words.sum(1)
+        k_sync = onp.zeros((words.shape[0],self.N+1))
+        k_sync[onp.arange(words.shape[0]),k_sync_idx] = 1
+        self.words = np.array(onp.hstack([words,onp.stack([onp.outer(word,word)[onp.triu_indices(self.N,1)] for word in words]),k_sync]))
+
+    def calc_marginals_ex(self,words,ps):
+        return self.words.T@ps
+
 class IsingNN(Model):
     def __init__(self,N):
         marg_1 = lambda i,x:x[i]
@@ -481,12 +433,27 @@ class IsingNN(Model):
         super().__init__(N,funcs=marg_1s+marg_2s)
         
     def calc_e(self,factors,word):
+        # return np.sum(factors[:self.N]*word[:self.N]) + np.sum(factors[self.N:]*np.outer(word,word)[self.idx[0],self.idx[1]])
         fields = factors[:self.N]@word
         corrs = 0
         for f,(i,j) in zip(factors[self.N:],self.pairs):
             corrs += f*word[i]*word[j]
         return fields+corrs
+        # np.concatenate([word,np.outer(word,word)[onp.triu_indices(self.N,1)]])+factors[self.k_sync_factors_start_idx:][np.sum(word)]#self.idx[0],self.idx[1]]])
     
+    # def calc_logp_unnormed(self,factors):
+    #     return -self.words@factors
+    
+    # def create_words(self):
+    #     words = np.array(onp.fliplr(list(it.product([0,1],repeat=self.N))))
+    #     k_sync_idx = words.sum(1)
+    #     k_sync = onp.zeros((words.shape[0],self.N+1))
+    #     k_sync[onp.arange(words.shape[0]),k_sync_idx] = 1
+    #     self.words = np.array(onp.hstack([words,onp.stack([onp.outer(word,word)[onp.triu_indices(self.N,1)] for word in words]),k_sync]))
+
+    # def calc_marginals_ex(self,words,ps):
+    #     return self.words.T@ps
+
 class ERGM(Model):
     def __init__(self,N,funcs):
         self.num_of_nodes = N

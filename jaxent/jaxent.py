@@ -1,7 +1,7 @@
 import jax.numpy as np
 import jax.random as random
 from jax import jit,vmap,grad
-from jax.ops import index_update
+from jax.ops import index_update, index_add
 from jax.lax import fori_loop, cond, while_loop
 from jax.experimental import optimizers
 from jax.scipy.special import logsumexp
@@ -394,13 +394,12 @@ class Model:
             self.Z = np.exp(self.calc_logZ(self.calc_logp_unnormed(self.factors)))  
             self.entropy = self._calc_entropy()
 
-    def _calc_entropy(self):
-        if self.p_model is not None:
-            return -np.sum(self.p_model*np.log2(self.p_model))
+    def _calc_entropy(self,p):
+        return -np.sum(p*np.log2(p))
     
-    def wang_landau(self, bin_width=0.01, depth=10):
+    def wang_landau(self, bin_width=0.01, depth=15):
         # default arguments
-        nsamples = 5000
+        nsamples = 50000
         FLATNESS_CRITEREA = 0.9
 
         # separate into bins covering all possible values of the energy
@@ -409,81 +408,80 @@ class Model:
 
         energy_bins = np.arange(min_energy, max_energy+bin_width, bin_width)        
 
+        def comp_Z(histogram,densities,energy_bins):
+            energy_bins = energy_bins[densities > 0]
+            densities = densities[densities > 0]
+            densities = densities - densities.min()
+
+            densities = np.exp(densities)
+            densities = densities / densities.sum()
+            densities = densities * 2 ** self.N
+
+            Z = (densities * np.exp(-energy_bins)).sum()
+            entropy = (densities * energy_bins * np.exp(-energy_bins) / (np.log(2) * Z)).sum() + np.log2(Z)
+            return Z, entropy
+
+        @jit
+        def nanmean(x):
+            return np.nansum(x)/(x.size-np.sum(np.isnan(x)))
+
         @jit
         def wl_step(j, loop_carry):
-            state, curr_bin, curr_nrg, histogram, densities, bits_to_flip, unifs = loop_carry
-
+            state, curr_bin, curr_nrg, histogram, densities, bits_to_flip, unifs, update_factor = loop_carry
             bit_to_flip = bits_to_flip[j]
 
             state_flipped = index_update(state,bit_to_flip,1-state[bit_to_flip])
             new_nrg = self.calc_e(self.factors,state_flipped)
-            new_bin = (new_nrg-min_energy)//bin_width
+            new_bin = ((new_nrg-min_energy)//bin_width).astype(int)
 
             dE = densities[new_bin] - densities[curr_bin]  
             accept = ((dE < 0) | (unifs[j] < np.exp(-dE)))
 
-            state = np.where(accept,new_state,state)
+            state = np.where(accept,state_flipped,state)
             curr_bin = np.where(accept,new_bin,curr_bin)
             curr_nrg = np.where(accept,new_nrg,curr_nrg)
 
-            densities = index_update(densities,curr_bin,update_factor)
-            histogram = index_update(histogram,curr_bin,1)
-            return state, curr_bin, curr_nrg, histogram, densities, bits_to_flip, unifs
+            densities = index_add(densities,curr_bin,update_factor)
+            histogram = index_add(histogram,curr_bin,1.)
+            return state, curr_bin, curr_nrg, histogram, densities, bits_to_flip, unifs,update_factor
 
         @jit
         def wl_while_until_flat(loop_carry):
-            mean_hist, min_hist, state, histogram, densities,key = loop_carry
-            #actual WL step
+            mean_hist, min_hist, state, histogram, densities,key, update_factor = loop_carry
             key, _ = random.split(key)
             bits_to_flip = random.randint(key,minval=0,maxval=self.N, shape=(nsamples,))
             unifs = random.uniform(key, shape=(nsamples,))
 
             init_nrg = self.calc_e(self.factors,state)
-            init_bin = (init_nrg-min_energy)//bin_width
+            init_bin = ((init_nrg-min_energy)//bin_width).astype(int)
 
-            state,_,_,histogram,densities,_,_ = fori_loop(0,nsamples,wl_step,(state,init_bin,init_nrg,histogram,densities,bits_to_flip,unifs))
-
-            tmp = np.where(densities > 0,histogram,0)
-            min_hist = np.min(tmp)
-            mean_hist = np.mean(tmp)
-            return mean_hist, min_hist, state, histogram, densities,key
+            state, init_bin, init_nrg, histogram, densities, bits_to_flip, unifs, update_factor = fori_loop(0, nsamples, wl_step, (state, init_bin, init_nrg, histogram, densities, bits_to_flip, unifs, update_factor))
+            
+            tmp = np.where(densities > 0, histogram, np.nan)
+            min_hist = np.nanmin(tmp)
+            mean_hist = nanmean(tmp)
+            return mean_hist, min_hist, state, histogram, densities,key,update_factor
 
         @jit
         def wl_depth_loop(j, loop_carry):
             state, histogram, densities,update_factor, key = loop_carry
-            # mean_hist, min_hist ,init_state, energy_bins, densities, histogram, update_factor, nsamples, separation = 
-            # stopping_crit = lambda x: x[1] <= (x[0] * FLATNESS_CRITEREA)
-            mean_hist, min_hist, state, histogram, densities,key = while_loop(lambda x: x[1] <= (x[0] * FLATNESS_CRITEREA), wl_while_until_flat,(1, 0 , state, histogram, densities,key))
+            mean_hist, min_hist, state, histogram, densities,key,update_factor = while_loop(lambda x: x[1] <= (x[0] * FLATNESS_CRITEREA), wl_while_until_flat,(1., 0., state, histogram, densities,key,update_factor))
             update_factor = update_factor / 2
             histogram = np.zeros_like(histogram)
             return state, histogram, densities, update_factor, key
 
-        state, histogram, densities,update_factor, key = fori_loop(0, depth, wl_depth_loop,
-                (np.zeros(self.N), np.zeros_like(energy_bins), np.zeros_like(energy_bins), 1, random.PRNGKey(0)))
+        carry = (np.zeros(self.N), np.zeros_like(energy_bins), np.zeros_like(energy_bins), 1., random.PRNGKey(0))
+        for i in range(depth):
+            carry = wl_depth_loop(i,carry)
+        
+        _, histogram, densities, _, _ = carry
+        Z, entropy = comp_Z(histogram,densities,energy_bins)
 
-        return energy_bins, histogram, densities
-
-        # # remove the non-zero states
-        # energy_bins = energy_bins[densities > 0]
-        # densities = densities[densities > 0]
-
-        # # compute the partition function:
-        # # first scale the densities down to avoid numerical problems
-        # densities = densities - densities.min()
-
-        # # it is unnormalized log, un-log it and normalize to 2^N
-        # densities = np.exp(densities)
-        # densities = densities / densities.sum()
-        # densities = densities * 2 ** self.ncells
-
-        # # now we can estimate the partition function from the densities and energy bins
-        # Z = (densities * np.exp(-energy_bins)).sum()
-        # logZ = -np.log(Z)
-
-        # self.z = logZ
-
-        # entropy = (densities * energy_bins * np.exp(-energy_bins) / (np.log(2) * Z)).sum() + np.log2(Z)
-        # self.__fields['entropy'] = entropy
+        if self.Z is None:
+            self.Z = Z
+        if self.entropy is None:
+            self.entropy = entropy
+        return Z, entropy
 
 class Ising(Model):
     def __init__(self,N):

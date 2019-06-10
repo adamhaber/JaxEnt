@@ -17,7 +17,9 @@ import matplotlib.pyplot as plt
 from time import time
 
 # TODO:
+# [] take functions such as wl out of Model?
 # [] Add sparse matrices for create_words
+# [] Analytical Indep model
 # [] Consider splitting Model into Model and ExpDistribution\
 # [] Add ERGM example
 # [v] Add KIsing example
@@ -173,8 +175,8 @@ class Model:
         logp_unnormed = -self.words@factors
         return logp_unnormed
 
-    def wang_landau(self,factors):
-        raise NotImplementedError
+    # def wang_landau(self,factors):
+    #     raise NotImplementedError
 
     def calc_logZ(self,logp_unnormed):
         """calc partition function of an unnormalized probability distribution.
@@ -395,6 +397,93 @@ class Model:
     def _calc_entropy(self):
         if self.p_model is not None:
             return -np.sum(self.p_model*np.log2(self.p_model))
+    
+    def wang_landau(self, bin_width=0.01, depth=10):
+        # default arguments
+        nsamples = 5000
+        FLATNESS_CRITEREA = 0.9
+
+        # separate into bins covering all possible values of the energy
+        min_energy = np.sum(np.where(self.factors<0,self.factors,0))
+        max_energy = np.sum(np.where(self.factors>0,self.factors,0))
+
+        energy_bins = np.arange(min_energy, max_energy+bin_width, bin_width)        
+
+        @jit
+        def wl_step(j, loop_carry):
+            state, curr_bin, curr_nrg, histogram, densities, bits_to_flip, unifs = loop_carry
+
+            bit_to_flip = bits_to_flip[j]
+
+            state_flipped = index_update(state,bit_to_flip,1-state[bit_to_flip])
+            new_nrg = self.calc_e(self.factors,state_flipped)
+            new_bin = (new_nrg-min_energy)//bin_width
+
+            dE = densities[new_bin] - densities[curr_bin]  
+            accept = ((dE < 0) | (unifs[j] < np.exp(-dE)))
+
+            state = np.where(accept,new_state,state)
+            curr_bin = np.where(accept,new_bin,curr_bin)
+            curr_nrg = np.where(accept,new_nrg,curr_nrg)
+
+            densities = index_update(densities,curr_bin,update_factor)
+            histogram = index_update(histogram,curr_bin,1)
+            return state, curr_bin, curr_nrg, histogram, densities, bits_to_flip, unifs
+
+        @jit
+        def wl_while_until_flat(loop_carry):
+            mean_hist, min_hist, state, histogram, densities,key = loop_carry
+            #actual WL step
+            key, _ = random.split(key)
+            bits_to_flip = random.randint(key,minval=0,maxval=self.N, shape=(nsamples,))
+            unifs = random.uniform(key, shape=(nsamples,))
+
+            init_nrg = self.calc_e(self.factors,state)
+            init_bin = (init_nrg-min_energy)//bin_width
+
+            state,_,_,histogram,densities,_,_ = fori_loop(0,nsamples,wl_step,(state,init_bin,init_nrg,histogram,densities,bits_to_flip,unifs))
+
+            tmp = np.where(densities > 0,histogram,0)
+            min_hist = np.min(tmp)
+            mean_hist = np.mean(tmp)
+            return mean_hist, min_hist, state, histogram, densities,key
+
+        @jit
+        def wl_depth_loop(j, loop_carry):
+            state, histogram, densities,update_factor, key = loop_carry
+            # mean_hist, min_hist ,init_state, energy_bins, densities, histogram, update_factor, nsamples, separation = 
+            # stopping_crit = lambda x: x[1] <= (x[0] * FLATNESS_CRITEREA)
+            mean_hist, min_hist, state, histogram, densities,key = while_loop(lambda x: x[1] <= (x[0] * FLATNESS_CRITEREA), wl_while_until_flat,(1, 0 , state, histogram, densities,key))
+            update_factor = update_factor / 2
+            histogram = np.zeros_like(histogram)
+            return state, histogram, densities, update_factor, key
+
+        state, histogram, densities,update_factor, key = fori_loop(0, depth, wl_depth_loop,
+                (np.zeros(self.N), np.zeros_like(energy_bins), np.zeros_like(energy_bins), 1, random.PRNGKey(0)))
+
+        return energy_bins, histogram, densities
+
+        # # remove the non-zero states
+        # energy_bins = energy_bins[densities > 0]
+        # densities = densities[densities > 0]
+
+        # # compute the partition function:
+        # # first scale the densities down to avoid numerical problems
+        # densities = densities - densities.min()
+
+        # # it is unnormalized log, un-log it and normalize to 2^N
+        # densities = np.exp(densities)
+        # densities = densities / densities.sum()
+        # densities = densities * 2 ** self.ncells
+
+        # # now we can estimate the partition function from the densities and energy bins
+        # Z = (densities * np.exp(-energy_bins)).sum()
+        # logZ = -np.log(Z)
+
+        # self.z = logZ
+
+        # entropy = (densities * energy_bins * np.exp(-energy_bins) / (np.log(2) * Z)).sum() + np.log2(Z)
+        # self.__fields['entropy'] = entropy
 
 class Ising(Model):
     def __init__(self,N):
@@ -496,3 +585,4 @@ class ERGM(Model):
 
     def insert_diag(self,x):
         return onp.insert(x,0,axis=1)      ## to replace by np.insert when it's implemented
+

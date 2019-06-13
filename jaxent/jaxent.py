@@ -386,7 +386,7 @@ class Model:
         if kind=='exhuastive':
             self.p_model = self._calc_p(self.factors)
             self.Z = np.exp(self.calc_logZ(self.calc_logp_unnormed(self.factors)))  
-            self.entropy = self._calc_entropy()
+            self.entropy = self._calc_entropy(self.p_model)
 
     def _calc_entropy(self,p):
         """calc the entropy of a probability 

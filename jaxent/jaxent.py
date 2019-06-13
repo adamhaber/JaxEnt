@@ -10,7 +10,6 @@ from jax.config import config; config.update("jax_enable_x64", True)
 import numpy as onp
 from functools import partial
 import itertools as it
-from tqdm import tqdm
 from scipy.stats import beta
 
 import matplotlib.pyplot as plt

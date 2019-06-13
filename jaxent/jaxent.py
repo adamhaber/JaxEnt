@@ -414,18 +414,21 @@ class Model:
         max_energy = np.sum(np.where(self.factors>0,self.factors,0))
 
         energy_bins = np.arange(min_energy, max_energy+bin_width, bin_width)        
-
+        
         def comp_Z(histogram,densities,energy_bins):
             energy_bins = energy_bins[densities > 0]
             densities = densities[densities > 0]
             densities = densities - densities.min()
 
-            densities = np.exp(densities)
-            densities = densities / densities.sum()
-            densities = densities * 2 ** self.N
+            neg_e = energy_bins<0
 
-            Z = (densities * np.exp(-energy_bins)).sum()
-            entropy = (densities * energy_bins * np.exp(-energy_bins) / (np.log(2) * Z)).sum() + np.log2(Z)
+            logZ = logsumexp(-energy_bins + self.N*np.log(2) + densities - logsumexp(densities))
+            Z = np.exp(logZ)
+
+            # separate to negative and positive energy bins and do the same trick?
+            logS1 = logsumexp(-energy_bins[neg_e] + np.log(-energy_bins[neg_e]) + self.N*np.log(2) + densities[neg_e] - logsumexp(densities))
+            logS2 = logsumexp(-energy_bins[~neg_e] + np.log(energy_bins[~neg_e]) + self.N*np.log(2) + densities[~neg_e] - logsumexp(densities))
+            entropy = (np.exp(logS2)-np.exp(logS1))/(np.log(2) * Z) + np.log2(Z) 
             return Z, entropy
 
         @jit

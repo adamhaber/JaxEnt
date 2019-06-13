@@ -349,7 +349,7 @@ class Model:
         @jit
         def _training_step(i,opt_state):
             params = get_params(opt_state)
-            samples = self._sample(random.PRNGKey(onp.random.randint(0,10000)),5000,params)
+            samples = self._sample(random.PRNGKey(onp.random.randint(0,10000)),n_samps,params)
             model_marg = self.calc_marginals(samples)
             g = self.empirical_marginals-model_marg
             return opt_update(i, g, opt_state),model_marg
@@ -398,7 +398,7 @@ class Model:
         """
         return -np.sum(p*np.log2(p))
     
-    def wang_landau(self, bin_width=0.01, depth=15):
+    def wang_landau(self, bin_width=0.01, depth=15,nsamples = 100000, flatness_crit = 0.9):
         """Estimates the partition function and entropy using the Wang-Landau method:
         https://en.wikipedia.org/wiki/Wang_and_Landau_algorithm
         
@@ -408,10 +408,14 @@ class Model:
             resolution of energy bins, by default 0.01
         depth : int, optional
             number of times the WL update factor is refined, by default 15. Higher values improved estimation accuracy but take more time
+        nsamples : int, optional
+            number of samples generated in each WL step, by default 100000
+        flatness_crit : float, optional
+            the min-to-mean ration used to determine histogram flatness, by default 0.9
         """
         # default arguments
-        nsamples = 100000
-        FLATNESS_CRITEREA = 0.9
+        
+        
 
         # separate into bins covering all possible values of the energy
         min_energy = np.sum(np.where(self.factors<0,self.factors,0))
@@ -476,7 +480,7 @@ class Model:
         @jit
         def wl_depth_loop(j, loop_carry):
             state, histogram, densities,update_factor, key = loop_carry
-            mean_hist, min_hist, state, histogram, densities,key,update_factor = while_loop(lambda x: x[1] <= (x[0] * FLATNESS_CRITEREA), wl_while_until_flat,(1., 0., state, histogram, densities,key,update_factor))
+            mean_hist, min_hist, state, histogram, densities,key,update_factor = while_loop(lambda x: x[1] <= (x[0] * flatness_crit), wl_while_until_flat,(1., 0., state, histogram, densities,key,update_factor))
             update_factor = update_factor / 2
             histogram = np.zeros_like(histogram)
             return state, histogram, densities, update_factor, key

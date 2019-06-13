@@ -12,9 +12,6 @@ from functools import partial
 import itertools as it
 from scipy.stats import beta
 
-import matplotlib.pyplot as plt
-from time import time
-
 # TODO:
 # [] Consider taking functions such as wl out of Model (to avoid re-compilation for different objects)
 # [] Add sparse matrices for create_words

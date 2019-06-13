@@ -17,23 +17,17 @@ import matplotlib.pyplot as plt
 from time import time
 
 # TODO:
-# [] take functions such as wl out of Model?
+# [] Consider taking functions such as wl out of Model (to avoid re-compilation for different objects)
 # [] Add sparse matrices for create_words
 # [] Analytical Indep model
-# [] Consider splitting Model into Model and ExpDistribution\
+# [] Consider splitting Model into Model and ExpDistribution?
 # [] Add ERGM example
-# [v] Add KIsing example
 # [] Add RBM example
 # [] Profiling using asv: https://github.com/airspeed-velocity/asv
 # [] Add some max_iterations flag for training
-# [] implement wang landau
-# [] implement memory in train_sample
-# [] Add more efficient implementation of isingNN 
-# [] Raise execption if an exhuastive function is called with N>20. Decorator? 
-
-# temporary hack until installation issues on cluster are fixed
-import os
-os.environ["XLA_FLAGS"]="--xla_gpu_cuda_data_dir=/apps/RH7U2/general/cuda/10.0/"
+# [] Implement gradient memory in train_sample
+# [] Improve efficiency of isingNN 
+# [] Raise execption if an exhuastive function is called with N>20
 
 def clopper_pearson(k,n,alpha):
     """Confidence intervals for a binomial distribution of k expected successes on n trials:
@@ -395,11 +389,28 @@ class Model:
             self.entropy = self._calc_entropy()
 
     def _calc_entropy(self,p):
+        """calc the entropy of a probability 
+        
+        Parameters
+        ----------
+        p : array_like
+            vector of probabilities
+        """
         return -np.sum(p*np.log2(p))
     
     def wang_landau(self, bin_width=0.01, depth=15):
+        """Estimates the partition function and entropy using the Wang-Landau method:
+        https://en.wikipedia.org/wiki/Wang_and_Landau_algorithm
+        
+        Parameters
+        ----------
+        bin_width : float, optional
+            resolution of energy bins, by default 0.01
+        depth : int, optional
+            number of times the WL update factor is refined, by default 15. Higher values improved estimation accuracy but take more time
+        """
         # default arguments
-        nsamples = 50000
+        nsamples = 100000
         FLATNESS_CRITEREA = 0.9
 
         # separate into bins covering all possible values of the energy
@@ -477,10 +488,8 @@ class Model:
         _, histogram, densities, _, _ = carry
         Z, entropy = comp_Z(histogram,densities,energy_bins)
 
-        if self.Z is None:
-            self.Z = Z
-        if self.entropy is None:
-            self.entropy = entropy
+        self.Z = Z
+        self.entropy = entropy
         return Z, entropy
 
 class Ising(Model):

@@ -413,10 +413,6 @@ class Model:
         flatness_crit : float, optional
             the min-to-mean ration used to determine histogram flatness, by default 0.9
         """
-        # default arguments
-        
-        
-
         # separate into bins covering all possible values of the energy
         min_energy = np.sum(np.where(self.factors<0,self.factors,0))
         max_energy = np.sum(np.where(self.factors>0,self.factors,0))

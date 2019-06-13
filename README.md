@@ -1,25 +1,26 @@
 # JaxEnt
-A [JAX](https://github.com/google/jax)-based python package for maximum entropy modeling of binary data. 
+A [JAX](https://github.com/google/jax)-based python package for maximum entropy modeling of multivariate binary data. 
 
 ## What is JaxEnt?
-JaxEnt is a small, lightweight python package for fitting, sampling from and computing various quantities of maximum entropy distributions with arbitrary constraints (almost; see below). As the name suggests, JaxEnt uses [JAX](https://github.com/google/jax) to get JIT compilation of various function to CPU/GPU/TPU. JaxEnt is a research project under active development (as is JAX itself). Expect `NotImplementedError`-s, and possibly future API breaking changes as JaxEnt gradually support more usecases.
+JaxEnt is a small, lightweight python package for fitting, sampling from and computing various quantities of maximum entropy distributions with arbitrary constraints. As the name suggests, JaxEnt uses [JAX](https://github.com/google/jax) to get JIT compilation of various function to CPU/GPU/TPU.  JaxEnt implements several popular maximum entropy models (see below), and extending it to other usecases is straightforward.
+
+JaxEnt is a research project under active development (as is JAX itself). Expect `NotImplementedError`-s, and possibly future API breaking changes as JaxEnt gradually supports more usecases. Contributions, feature requests, additions, corrections and suggestions are welcomed. 
+
  
 ## Installation
 
-To install JaxEnt with a CPU version of JAX, you can use pip:
-
-```
-pip install jaxent
-```
-
-To use JaxEnt on the GPU, you will need to first [install](https://github.com/google/jax#installation) `jax` and `jaxlib` with CUDA support.
-
-You can also install JaxEnt from source:
-
+Installation is simple:
 ```
 git clone https://github.com/adamhaber/jaxent.git
-# install jax/jaxlib first for CUDA support
-pip install -e .
+cd jaxent
+pip install .
+```
+
+## Testing
+To make sure everything works as planned, run: 
+```
+cd jaxent
+pytest
 ```
 
 ## Examples
@@ -32,7 +33,7 @@ Maximum entropy distributions over binary variables are very common in a wide va
 Here's an example of generating fake data from one Ising model, and fitting a different model to the same data: 
 
 ```python
-from jaxent import jaxent
+import jaxent
 import numpy as onp
 import jax.numpy as np
 import matplotlib.pyplot as plt
@@ -56,19 +57,15 @@ The marginals of `m2` are all within the (normalized) errorbars of the original 
 
 ![readme figure](https://user-images.githubusercontent.com/20320402/59023548-b794e980-8858-11e9-9350-6c7d252a25cc.png)
 
-
-
-
  ## Future Work
 
+ - Further improve performance of sampling and training methods
  - Implememt Wang-Landau estimator of the partition function for larger models
- - Further improve performance of sampling and training methods.
- - Expand tests suite.
+ - Expand tests suite
  - Sparse matrices support
+ - Add notebooks and examples
   
-  Feature requests and improvement ideas are welcomed.
- 
  ## Thanks
- -  [Ori Maoz](https://github.com/orimaoz) who wrote the original, excellent MATLAB [maxent toolbox](https://orimaoz.github.io/maxent_toolbox/). I plagiarized large parts of his API, design choices, with permission of course.
+ - [Ori Maoz](https://github.com/orimaoz) who wrote the original, excellent MATLAB [maxent toolbox](https://orimaoz.github.io/maxent_toolbox/). I plagiarized large parts of his API, design choices, with permission of course.
 
  

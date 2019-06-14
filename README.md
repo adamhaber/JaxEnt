@@ -60,7 +60,7 @@ The marginals of `m2` are all within the (normalized) errorbars of the original 
  ## Future Work
 
  - Further improve performance of sampling and training methods
- - Implement adaptive binnig in Wang-Landau
+ - Implement adaptive binning in Wang-Landau algorithm
  - Expand tests suite
  - Sparse matrices support
  - Add notebooks and examples

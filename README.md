@@ -66,6 +66,6 @@ The marginals of `m2` are all within the (normalized) errorbars of the original 
  - Add notebooks and examples
   
  ## Thanks
- - [Ori Maoz](https://github.com/orimaoz) who wrote the original, excellent MATLAB [maxent toolbox](https://orimaoz.github.io/maxent_toolbox/). I plagiarized large parts of his API, design choices, with permission of course.
+ - Big thanks to [Ori Maoz](https://github.com/orimaoz) who wrote the original, excellent MATLAB [maxent toolbox](https://orimaoz.github.io/maxent_toolbox/) for our lab. I plagiarized large parts of his API, design choices, etc - with permission of course. :-)
 
  

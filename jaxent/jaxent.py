@@ -6,6 +6,7 @@ from jax.lax import fori_loop, cond, while_loop
 from jax.experimental import optimizers
 from jax.scipy.special import logsumexp
 from jax.config import config; config.update("jax_enable_x64", True)
+import matplotlib.pyplot as plt
 
 import numpy as onp
 from functools import partial
@@ -48,6 +49,27 @@ def clopper_pearson(k,n,alpha):
     hi = beta.ppf(1 - alpha/2, k+1, n-k)
     hi[onp.isnan(hi)] = 1   # hack to remove NaNs where the marginal is 1
     return lo, hi
+
+def plotFunnel(model,data,dots_color='r',dots_size=3.,alpha=0.01,title=None,fig_name=None,lw=1.,ln_color='k',ylim=None):
+    f = plt.figure()
+    unique_words, counts = onp.unique(data,axis=0,return_counts=True) 
+    p_emp = counts/counts.sum()
+    model_logp = onp.array([-model.calc_e(model.factors,w)-onp.log(model.Z) for w in unique_words])
+    plt.scatter(onp.log(p_emp),model_logp-onp.log(p_emp),s=dots_size,color=dots_color)
+    low,up = clopper_pearson(counts,counts.sum(),alpha)
+    idx = onp.argsort(p_emp)
+    plt.plot(onp.log(p_emp)[idx],onp.log(up)[idx]-onp.log(p_emp)[idx],color=ln_color,lw=lw)
+    plt.plot(onp.log(p_emp)[idx],onp.log(low)[idx]-onp.log(p_emp)[idx],color=ln_color,lw=lw)
+    plt.xlabel("$\logP_{emp}$")
+    plt.ylabel("$\log{P_{m}-\logP_{emp}}$")
+    plt.tight_layout()
+    if title: 
+        plt.title(title)
+    if fig_name: 
+        plt.savefig(fig_name)
+    if ylim:
+        plt.ylim(**ylim)
+    return f
 
 class Model:
     def __init__(self,N,funcs,N_exhuastive_max=20):
@@ -310,8 +332,8 @@ class Model:
         elif data_kind=="marginals":
             self.empirical_marginals = data
         (lower, upper) = clopper_pearson(self.empirical_marginals * data_n_samp, data_n_samp, alpha)
-        self.empirical_std = upper - lower
-            
+        return lower, upper
+                
     def train(self,data,data_kind="samples",data_n_samp=None,alpha=0.32,lr=1e-1,threshold=1.,kind=None,n_samps=5000):
         """fit a maximum entropy model to data.
         
@@ -369,7 +391,8 @@ class Model:
             step = _training_step
             self.model_marginals = self.calc_marginals(self._sample(random.PRNGKey(onp.random.randint(0,10000)),n_samps,self.factors))
 
-        self.calc_empirical_marginals_and_stds(data,data_kind,data_n_samp,alpha)
+        lower, upper = self.calc_empirical_marginals_and_stds(data,data_kind,data_n_samp,alpha)
+        self.empirical_std = upper-lower
     
         opt_init, opt_update, get_params = optimizers.adam(lr)
         training_steps, opt_state, params,marginals = while_loop(lambda x: np.max(self.calc_deviations(x[3])) > threshold,_training_loop, (0,opt_init(self.factors), self.factors,self.model_marginals))

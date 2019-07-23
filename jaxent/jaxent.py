@@ -556,6 +556,9 @@ class MERP(Model):
     def calc_e(self,factors,word):
         # return np.sum(factors[:self.N]*word[:self.N]) + np.sum(factors[self.N:]*np.outer(word,word)[self.idx[0],self.idx[1]])
         return factors@np.where(self.projections@word>self.projections_thresholds,1,0)
+    
+    def calc_marginals(self, words):
+        return (self.projections@words.T>self.projections_thresholds[:,None]).mean(1)
 
 class Indep(Model):
     def __init__(self,N):

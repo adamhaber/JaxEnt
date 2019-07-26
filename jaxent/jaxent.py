@@ -1,6 +1,7 @@
 import jax.numpy as np
 import jax.random as random
 from jax import jit,vmap,grad
+import jax
 from jax.ops import index_update, index_add
 from jax.lax import fori_loop, cond, while_loop
 from jax.experimental import optimizers
@@ -12,6 +13,8 @@ import numpy as onp
 from functools import partial
 import itertools as it
 from scipy.stats import beta
+
+from multipledispatch import dispatch
 
 # TODO:
 # [] Consider taking functions such as wl out of Model (to avoid re-compilation for different objects)
@@ -72,12 +75,16 @@ def plotFunnel(model,data,dots_color='r',dots_size=3.,alpha=0.01,title=None,fig_
     return f
 
 class Model:
-    def __init__(self,N,funcs,N_exhuastive_max=20):
+    def __init__(self,N,funcs,N_exhuastive_max=20,factors=None):
         self.N = N
         self.funcs = funcs
         self.entropy = None
         self.Z = None
-        self.factors = np.zeros(len(funcs))
+        if factors is None:
+            self.factors = np.zeros(len(funcs))
+        else:
+            assert factors.size == len(funcs)
+            self.factors = factors
         self.model_marginals = None
         self.empirical_marginals = None
         self.empirical_std = None
@@ -116,6 +123,8 @@ class Model:
         """
         return np.sum(factors*np.array([func(word) for func in self.funcs]))
 
+    
+    @dispatch(jax.interpreters.xla.DeviceArray, int)
     def sample(self,key,n_samps):
         """generate samples from a distributions with the model factors
         
@@ -132,6 +141,22 @@ class Model:
             samples from the model
         """
         return self._sample(key,n_samps,self.factors)
+    
+    @dispatch(int)
+    def sample(self, n_samps):
+        """generate samples from a distributions with the model factors and a fixed key
+        
+        Parameters
+        ----------
+        n_samps : int
+            number of samples to generate
+        
+        Returns
+        -------
+        array_like
+            samples from the model
+        """
+        return self._sample(jax.random.PRNGKey(0),n_samps,self.factors)
 
     def _sample(self,key,n_samps,factors):
         """generate samples from a distributions with a given set of factors
@@ -245,23 +270,16 @@ class Model:
         logp = self.calc_logp(factors)
         return np.exp(logp)
     
-    def calc_p(self,factors):
-        """calc the normalized probability distribution with the given factors, and sets the corresponding class attribute.  
-        Only possible for N<=20, since the entire probability distribution needs to fit in memory.
-        
-        Parameters
-        ----------
-        factors : array_like
-            factors of the distribution
-        
-        Returns
-        -------
-        array_like
-            array of probabilities.
-        """
-        if self.p_model is None:
-            self.p_model = self._calc_p(factors)
+    @dispatch()
+    def calc_p(self):
+        if self.words is None:
+            self.create_words()
+        self.p_model = self._calc_p(self.factors)
         return self.p_model
+    
+    @dispatch(jax.interpreters.xla.DeviceArray)
+    def calc_p(self,factors):
+        return self._calc_p(factors)
 
     def calc_marginals(self,words):
         """calc the mean parameters (expectation values of the constraint function).
@@ -290,7 +308,7 @@ class Model:
         devs = np.abs(model_marg - self.empirical_marginals) / self.empirical_std
         return devs
         
-    def calc_marginals_ex(self,ps):
+    def calc_marginals_ex(self,ps=None):
         """calc the mean parameters (expectation values of the constraint function) analytically.
         Only possible for N<=20, since the entire probability distribution needs to fit in memory.
         
@@ -299,7 +317,12 @@ class Model:
         ps : array_type
             probability distribution w.r.t which the expectation values are computed
         """
-        return ps@self.words
+        if ps is None:
+            if self.p_model is None:
+                self.calc_p()
+            return self.p_model@self.words    
+        else:
+            return ps@self.words
         # return np.stack([vmap(f)(self.words) for f in self.funcs])@ps
 
     def create_words(self):
@@ -515,19 +538,26 @@ class Model:
         return Z, entropy
 
 class Ising(Model):
-    def __init__(self,N):
+    def __init__(self,N,factors = None):
         marg_1 = lambda i,x:x[i]
         marg_2 = lambda i,j,x:x[i]*x[j]
 
         marg_1s = [jit(partial(marg_1,i)) for i in range(N)]
         marg_2s = [jit(partial(marg_2,i,j)) for i,j in list(it.combinations(range(N),r=2))]
-        super().__init__(N,funcs=marg_1s+marg_2s)
+        self.triu = np.array(onp.triu_indices(N,1))
+        self.calc_marginals = jit(self.calc_marginals)
+        self.calc_e = jit(self.calc_e)
+        super().__init__(N,funcs=marg_1s+marg_2s, factors = factors)
         
     def calc_e(self,factors,word):
-        return factors@np.concatenate([word,np.outer(word,word)[onp.triu_indices(self.N,1)]])#self.idx[0],self.idx[1]]])
+        return factors@np.concatenate([word,np.outer(word,word)[self.triu[0], self.triu[1]]])#self.idx[0],self.idx[1]]])
+
+    def calc_marginals(self, words):
+        return np.concatenate([words.mean(0), (words.T@words)[self.triu[0], self.triu[1]]/words.shape[0]])
     
 class MERP(Model):
-    def __init__(self,N,nprojections=None, indegree=5, threshold=0.1, projections=None, projections_thresholds=None,seed=0):
+    def __init__(self,N,nprojections=None, indegree=5, threshold=0.1, projections=None, projections_thresholds=None,seed=0, 
+    factors = None):
         if projections is not None:
             self.projections = projections
             self._n_projections = projections.shape[0]
@@ -551,7 +581,7 @@ class MERP(Model):
         proj = lambda i,x:np.where(self.projections[i]@x>self.projections_thresholds[i],1,0)
 
         projs = [jit(partial(proj,i)) for i in range(self._n_projections)]
-        super().__init__(N,funcs=projs)
+        super().__init__(N,funcs=projs, factors=factors)
         
     def calc_e(self,factors,word):
         # return np.sum(factors[:self.N]*word[:self.N]) + np.sum(factors[self.N:]*np.outer(word,word)[self.idx[0],self.idx[1]])
@@ -561,10 +591,10 @@ class MERP(Model):
         return (self.projections@words.T>self.projections_thresholds[:,None]).mean(1)
 
 class Indep(Model):
-    def __init__(self,N):
+    def __init__(self,N, factors = None):
         marg_1 = lambda i,x:x[i]
         marg_1s = [jit(partial(marg_1,i)) for i in range(N)]
-        super().__init__(N,funcs=marg_1s)
+        super().__init__(N,funcs=marg_1s, factors=factors)
         self.calc_e = jit(self.calc_e)
 
     def calc_e(self,factors,word):

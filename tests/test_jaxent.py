@@ -12,10 +12,9 @@ indep_factors = np.array([5.21594169, 5.29834249, 2.46359556, 1.35917143, 1.0879
 indep_marg = np.array([0.0054,0.004975,0.07845,0.204375,0.252])
 
 def test_indep_calc_marginals_ex():
-    m = Indep(N_indep)
-    m.create_words()
-    m.calc_p(indep_factors)
-    model_marginals = m.calc_marginals_ex(m.p_model)
+    m = Indep(N_indep, factors = indep_factors)
+    m.calc_p()
+    model_marginals = m.calc_marginals_ex()
     assert onp.array(indep_marg)==pytest.approx(onp.array(model_marginals))
 
 def test_indep_train_exhuastive_from_marginals(lr=1e-1):
@@ -24,18 +23,16 @@ def test_indep_train_exhuastive_from_marginals(lr=1e-1):
     assert onp.array(m.model_marginals)==pytest.approx(onp.array(indep_marg),abs=1e-2)
 
 def test_indep_train_exhuastive_from_data():
-    m = Indep(N_indep)
-    m.factors = indep_factors
-    data = m.sample(random.PRNGKey(0),10000)
+    m = Indep(N_indep, factors = indep_factors)
+    data = m.sample(10000)
     
     m2 = Indep(N_indep)
     m2.train(data,threshold=1)
     assert onp.array(m2.model_marginals)==pytest.approx(onp.array(indep_marg),abs=1e-2)
 
 def test_indep_train_sample_from_data():
-    m = Indep(N_indep)
-    m.factors = indep_factors
-    data = m.sample(random.PRNGKey(0),10000)
+    m = Indep(N_indep, factors = indep_factors)
+    data = m.sample(10000)
     
     m2 = Indep(N_indep)
     m2.train(data,threshold=1,kind='sample')
@@ -102,10 +99,9 @@ ising_factors = np.array([ 5.74972501,  6.37797427,  3.05548923,  1.79285556,  1
        -0.13397996, -0.04126408, -0.97763965, -0.50263994, -0.10838287])
 
 def test_ising_calc_marginals_ex():
-    m = Ising(N_ising)
-    m.create_words()
-    m.calc_p(ising_factors)
-    model_marginals = m.calc_marginals_ex(m.p_model)
+    m = Ising(N_ising, factors = ising_factors)
+    m.calc_p()
+    model_marginals = m.calc_marginals_ex()
     assert onp.array(ising_marg)==pytest.approx(onp.array(model_marginals))
 
 def test_ising_train_exhuastive_from_marginals():
@@ -115,9 +111,8 @@ def test_ising_train_exhuastive_from_marginals():
     assert onp.array(m.model_marginals)==pytest.approx(onp.array(ising_marg),abs=1e-2)
 
 def test_ising_train_exhuastive_from_data():
-    m = Ising(N_ising)
-    m.factors = ising_factors
-    data = m.sample(random.PRNGKey(0),10000)
+    m = Ising(N_ising, factors = ising_factors)
+    data = m.sample(10000)
     
     m2 = Ising(N_ising)
     m2.train(data,threshold=1)

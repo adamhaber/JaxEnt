@@ -113,7 +113,12 @@ def test_ising_train_exhuastive_from_marginals():
 def test_ising_train_exhuastive_from_data():
     m = Ising(N_ising, factors = ising_factors)
     data = m.sample(10000)
-    
     m2 = Ising(N_ising)
     m2.train(data,threshold=1)
     assert onp.array(m2.model_marginals)==pytest.approx(onp.array(ising_marg),abs=1e-2)
+
+def test_sample_bit_to_fix():
+    m = Ising(N_ising, factors = ising_factors)
+    data = m.sample(10000, bits_to_fix = [0, 1, 9], values_to_fix = [1, 0, 1])
+    data_mean = data.mean(0)
+    assert data_mean[0]==1 and data_mean[1]==0 and data_mean[9]==1

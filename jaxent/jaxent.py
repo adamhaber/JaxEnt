@@ -96,7 +96,7 @@ class Model:
         self.N_exhuastive_max = N_exhuastive_max
 
         self.calc_e = jit(self.calc_e)
-        self._sample = jit(self._sample, static_argnums=(1,))
+        self._sample = jit(self._sample, static_argnums=(1,3,4))
         self.calc_logp_unnormed = jit(self.calc_logp_unnormed)
         self.calc_logZ = jit(self.calc_logZ)
         self.calc_logp = jit(self.calc_logp)
@@ -125,7 +125,7 @@ class Model:
 
     
     @dispatch(jax.interpreters.xla.DeviceArray, int)
-    def sample(self,key,n_samps):
+    def sample(self,key,n_samps, bits_to_fix = -1, values_to_fix = -1):
         """generate samples from a distributions with the model factors
         
         Parameters
@@ -140,10 +140,10 @@ class Model:
         array_like
             samples from the model
         """
-        return self._sample(key,n_samps,self.factors)
+        return self._sample(key,n_samps,self.factors, bits_to_fix, values_to_fix)
     
     @dispatch(int)
-    def sample(self, n_samps):
+    def sample(self, n_samps, bits_to_fix = -1, values_to_fix = -1):
         """generate samples from a distributions with the model factors and a fixed key
         
         Parameters
@@ -156,9 +156,9 @@ class Model:
         array_like
             samples from the model
         """
-        return self._sample(jax.random.PRNGKey(0),n_samps,self.factors)
+        return self._sample(jax.random.PRNGKey(0),n_samps,self.factors, bits_to_fix, values_to_fix)
 
-    def _sample(self,key,n_samps,factors):
+    def _sample(self,key,n_samps,factors, bits_to_fix = -1, values_to_fix = -1):
         """generate samples from a distributions with a given set of factors
         
         Parameters
@@ -177,18 +177,40 @@ class Model:
         """
         state = random.randint(key,minval=0,maxval=2, shape=(self.N,))
         unifs = random.uniform(key, shape=(n_samps*self.N,))
+        all_states = np.zeros((n_samps,self.N))
+
+        if bits_to_fix != -1:
+            condition = True
+            bits_to_keep = np.array([x for x in range(self.N) if x not in bits_to_fix])
+            N = bits_to_keep.size
+            values_to_fix = np.array(values_to_fix)
+        else:
+            condition = False
+            bits_to_keep = np.arange(self.N)  
+            N = self.N
+        # @jit
+        # def run_mh(j, loop_carry):
+        #     state, all_states = loop_carry
+        #     all_states = index_update(all_states,j//self.N,state)  # a bit wasteful
+        #     state_flipped = index_update(state,j%self.N,1-state[j%self.N])
+        #     dE = self.calc_e(factors,state_flipped)-self.calc_e(factors,state)
+        #     accept = ((dE < 0) | (unifs[j] < np.exp(-dE)))
+        #     state = np.where(accept, state_flipped, state)
+        #     return state, all_states
+        
         @jit
         def run_mh(j, loop_carry):
             state, all_states = loop_carry
-            all_states = index_update(all_states,j//self.N,state)  # a bit wasteful
-            state_flipped = index_update(state,j%self.N,1-state[j%self.N])
+            if condition:
+                state = index_update(state, bits_to_fix, values_to_fix)
+            all_states = index_update(all_states,j//N,state)  # a bit wasteful
+            state_flipped = index_update(state,bits_to_keep[j%N],1-state[bits_to_keep[j%N]])
             dE = self.calc_e(factors,state_flipped)-self.calc_e(factors,state)
             accept = ((dE < 0) | (unifs[j] < np.exp(-dE)))
             state = np.where(accept, state_flipped, state)
             return state, all_states
 
-        all_states = np.zeros((n_samps,self.N))
-        all_states = fori_loop(0, n_samps * self.N, run_mh, (state, all_states))
+        all_states = fori_loop(0, n_samps * N, run_mh, (state, all_states))
         return all_states[1]
 
     def calc_logp_unnormed(self,factors):
@@ -390,7 +412,7 @@ class Model:
         @jit
         def _training_step(i,opt_state):
             params = get_params(opt_state)
-            samples = self._sample(random.PRNGKey(onp.random.randint(0,10000)),n_samps,params)
+            samples = self._sample(random.PRNGKey(onp.random.randint(0,10000)),n_samps,params, -1, -1)
             model_marg = self.calc_marginals(samples)
             g = self.empirical_marginals-model_marg
             return opt_update(i, g, opt_state),model_marg
@@ -412,7 +434,7 @@ class Model:
             self.model_marginals = self.calc_marginals_ex(self._calc_p(self.factors))
         elif kind=='sample':
             step = _training_step
-            self.model_marginals = self.calc_marginals(self._sample(random.PRNGKey(onp.random.randint(0,10000)),n_samps,self.factors))
+            self.model_marginals = self.calc_marginals(self._sample(random.PRNGKey(onp.random.randint(0,10000)),n_samps,self.factors,-1,-1))
 
         lower, upper = self.calc_empirical_marginals_and_stds(data,data_kind,data_n_samp,alpha)
         self.empirical_std = upper-lower

@@ -105,6 +105,7 @@ class Model:
         self.calc_marginals = jit(self.calc_marginals)#,static_argnums=(1,))
         self.calc_marginals_ex = jit(self.calc_marginals_ex)#,static_argnums=(1,))
         self.calc_deviations = jit(self.calc_deviations)
+        self.calc_fim = jit(self.calc_fim)
   
     def calc_e(self,factors,word):
         """calc the energy of a single binary word
@@ -412,17 +413,17 @@ class Model:
         @jit
         def _training_step(i,opt_state):
             params = get_params(opt_state)
-            samples = self._sample(random.PRNGKey(onp.random.randint(0,10000)),n_samps,params, -1, -1)
+            samples = self._sample(random.PRNGKey(i),n_samps,params, -1, -1)
             model_marg = self.calc_marginals(samples)
             g = self.empirical_marginals-model_marg
             return opt_update(i, g, opt_state),model_marg
         
         @jit
         def _training_loop(loop_carry):
-                    i,opt_state, params,_ = loop_carry
-                    opt_state,marginals = step(i,opt_state)
-                    params = get_params(opt_state)
-                    return i+1,opt_state, params,marginals
+                i,opt_state, params,_ = loop_carry
+                opt_state,marginals = step(i,opt_state)
+                params = get_params(opt_state)
+                return i+1,opt_state, params,marginals
 
         if kind is None:
             kind = onp.where(self.N>20,'sample','exhuastive')
@@ -434,7 +435,7 @@ class Model:
             self.model_marginals = self.calc_marginals_ex(self._calc_p(self.factors))
         elif kind=='sample':
             step = _training_step
-            self.model_marginals = self.calc_marginals(self._sample(random.PRNGKey(onp.random.randint(0,10000)),n_samps,self.factors,-1,-1))
+            self.model_marginals = self.calc_marginals(self._sample(random.PRNGKey(0),n_samps,self.factors,-1,-1))
 
         lower, upper = self.calc_empirical_marginals_and_stds(data,data_kind,data_n_samp,alpha)
         self.empirical_std = upper-lower
@@ -558,6 +559,19 @@ class Model:
         self.Z = Z
         self.entropy = entropy
         return Z, entropy
+
+    def calc_fim(self):
+        I = onp.zeros((len(self.funcs),len(self.funcs)))
+        for i in range(len(self.funcs)):
+            fi = self.funcs[i]
+            efi = p@vmap(fi)(self.words)
+            I[i,i] = (efi-efi**2)/2
+            for j in range(i+1,len(self.funcs)):
+                fj = self.funcs[j]
+                efj = p@vmap(fj)(self.words)
+                efifj = p@vmap(lambda x:fi(x)*fj(x))(self.words)
+                I[i,j] = efifj-efi*efj
+        return I+I.T
 
 class Ising(Model):
     def __init__(self,N,factors = None):
